@@ -1,0 +1,12 @@
+{
+  "waybill_id": "WB20260621002",
+  "recipient": "李护士",
+  "received_at": "2026-06-21T08:10:00",
+  "signed": false,
+  "signature_photo": null,
+  "box_checks": [
+    {"box_code": "BX20260621002A", "checked": true, "photo": "box_A_WB20260621002.jpg"},
+    {"box_code": "BX20260621002B", "checked": false, "photo": null}
+  ],
+  "anomaly_note": null
+}

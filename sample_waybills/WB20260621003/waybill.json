@@ -1,0 +1,18 @@
+{
+  "waybill_id": "WB20260621003",
+  "vehicle_plate": "京A12345",
+  "route": "朝阳疾控中心→通州接种点",
+  "carrier": "顺达冷链",
+  "departure_time": "2026-06-21T09:00:00",
+  "outbound_order_time": "2026-06-21T08:30:00",
+  "vaccination_point": {
+    "name": "通州区接种中心",
+    "latitude": 39.9020,
+    "longitude": 116.6560,
+    "radius_km": 2.0
+  },
+  "vaccine_boxes": [
+    {"box_code": "BX20260621003A", "product": "新冠疫苗（腺病毒载体）", "quantity": 60},
+    {"box_code": "BX20260621003B", "product": "HPV疫苗（九价）", "quantity": 15}
+  ]
+}

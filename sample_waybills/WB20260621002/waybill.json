@@ -1,0 +1,19 @@
+{
+  "waybill_id": "WB20260621002",
+  "vehicle_plate": "京B67890",
+  "route": "丰台疾控中心→大兴接种点",
+  "carrier": "京冷物流",
+  "departure_time": "2026-06-21T06:50:00",
+  "outbound_order_time": "2026-06-21T07:15:00",
+  "vaccination_point": {
+    "name": "大兴区接种中心",
+    "latitude": 39.7260,
+    "longitude": 116.3420,
+    "radius_km": 2.0
+  },
+  "vaccine_boxes": [
+    {"box_code": "BX20260621002A", "product": "乙肝疫苗", "quantity": 40},
+    {"box_code": "BX20260621002B", "product": "狂犬疫苗", "quantity": 20},
+    {"box_code": "BX20260621002C", "product": "百白破疫苗", "quantity": 35}
+  ]
+}

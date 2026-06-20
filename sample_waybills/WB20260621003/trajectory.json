@@ -1,0 +1,11 @@
+{
+  "waybill_id": "WB20260621003",
+  "points": [
+    {"timestamp": "2026-06-21T09:00:00", "latitude": 39.9210, "longitude": 116.4430, "speed": 0},
+    {"timestamp": "2026-06-21T09:20:00", "latitude": 39.9280, "longitude": 116.4900, "speed": 55},
+    {"timestamp": "2026-06-21T09:40:00", "latitude": 39.9100, "longitude": 116.5400, "speed": 50},
+    {"timestamp": "2026-06-21T10:00:00", "latitude": 39.9050, "longitude": 116.5900, "speed": 45},
+    {"timestamp": "2026-06-21T10:20:00", "latitude": 39.9020, "longitude": 116.6400, "speed": 35},
+    {"timestamp": "2026-06-21T10:35:00", "latitude": 39.9020, "longitude": 116.6560, "speed": 0}
+  ]
+}
