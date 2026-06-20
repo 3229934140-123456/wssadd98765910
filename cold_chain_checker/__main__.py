@@ -5,7 +5,11 @@ from datetime import datetime
 
 from cold_chain_checker.models import load_waybill, ValidationIssue
 from cold_chain_checker.validator import validate_waybill
-from cold_chain_checker.summary import generate_anomaly_summary, generate_product_summary, generate_vehicle_summary
+from cold_chain_checker.summary import (
+    generate_anomaly_summary, generate_product_summary,
+    generate_vehicle_summary, generate_anomaly_type_summary,
+    generate_unmatched_summary,
+)
 from cold_chain_checker.checklist import generate_handover_checklist
 from cold_chain_checker.display import format_single_result, format_batch_header, format_batch_footer
 from cold_chain_checker.report import export_daily_report
@@ -173,9 +177,17 @@ def run_batch_check(folder: str, output_checklist: str = None, output_report: st
     if product_summary:
         print(product_summary)
 
+    anomaly_type_summary = generate_anomaly_type_summary(results)
+    if anomaly_type_summary:
+        print(anomaly_type_summary)
+
     vehicle_summary = generate_vehicle_summary(results)
     if vehicle_summary:
         print(vehicle_summary)
+
+    unmatched_summary = generate_unmatched_summary(results)
+    if unmatched_summary:
+        print(unmatched_summary)
 
     if output_report:
         report_path = export_daily_report(results, output_report)

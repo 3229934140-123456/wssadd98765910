@@ -16,6 +16,17 @@ CATEGORY_LABELS = {
     "load_failed": "加载失败",
 }
 
+CATEGORY_ORDER = [
+    "load_failed",
+    "temperature_continuity",
+    "temperature_range",
+    "departure_time",
+    "arrival_location",
+    "receipt_signature",
+    "receipt_box_check",
+    "receipt_box_photo",
+]
+
 
 def _summarize_issues(issues: list) -> str:
     if not issues:
@@ -42,13 +53,11 @@ def _build_vehicle_summary_rows(results: list) -> list:
 
     for item in results:
         waybill = item.get("waybill")
+        is_load_failed = item.get("load_failed", False)
+
         if not waybill:
-            if item.get("load_failed"):
-                partial_wb = item.get("waybill")
-                if partial_wb:
-                    key = partial_wb.vehicle_plate
-                else:
-                    key = "（未知车辆）"
+            if is_load_failed:
+                key = "（未知车辆）"
                 entry = vehicle_data[key]
                 entry["total"] += 1
                 entry["load_failed"] += 1
@@ -62,13 +71,20 @@ def _build_vehicle_summary_rows(results: list) -> list:
         entry["total"] += 1
         entry["routes"].add(waybill.route)
         entry["carriers"].add(waybill.carrier)
-        issues = item.get("issues", [])
-        if issues:
+
+        if is_load_failed:
+            entry["load_failed"] += 1
             entry["failed"] += 1
-            for issue in issues:
+            for issue in item.get("issues", []):
                 entry["issues"].append(issue)
         else:
-            entry["passed"] += 1
+            issues = item.get("issues", [])
+            if issues:
+                entry["failed"] += 1
+                for issue in issues:
+                    entry["issues"].append(issue)
+            else:
+                entry["passed"] += 1
 
     rows = []
     for vehicle in sorted(vehicle_data.keys()):
@@ -83,7 +99,10 @@ def _build_vehicle_summary_rows(results: list) -> list:
             by_category[issue.category].append(issue)
 
         summary_parts = []
-        for cat, cat_items in by_category.items():
+        for cat in CATEGORY_ORDER:
+            if cat not in by_category:
+                continue
+            cat_items = by_category[cat]
             label = CATEGORY_LABELS.get(cat, cat)
             summary_parts.append(f"{label} {len(cat_items)} 条")
         main_issues = "，".join(summary_parts) if summary_parts else "无"
@@ -104,33 +123,92 @@ def _build_vehicle_summary_rows(results: list) -> list:
     return rows
 
 
+def _build_anomaly_type_rows(results: list) -> list:
+    category_data = defaultdict(lambda: {})
+
+    for item in results:
+        waybill = item.get("waybill")
+        issues = item.get("issues", [])
+        if not issues:
+            continue
+
+        if waybill:
+            wb_id = waybill.waybill_id
+            vehicle = waybill.vehicle_plate
+            route = waybill.route
+            products = "、".join(sorted(set(b.product for b in waybill.vaccine_boxes)))
+        else:
+            wb_id = item.get("folder_name", "未知")
+            vehicle = "未知"
+            route = "未知"
+            products = "未知"
+
+        for issue in issues:
+            cat = issue.category
+            cat_label = CATEGORY_LABELS.get(cat, cat)
+            if wb_id not in category_data[cat]:
+                category_data[cat][wb_id] = {
+                    "vehicle": vehicle,
+                    "route": route,
+                    "products": products,
+                    "messages": [],
+                }
+            category_data[cat][wb_id]["messages"].append(issue.message)
+
+    rows = []
+    for cat in CATEGORY_ORDER:
+        if cat not in category_data:
+            continue
+        cat_label = CATEGORY_LABELS.get(cat, cat)
+        for wb_id in sorted(category_data[cat].keys()):
+            info = category_data[cat][wb_id]
+            rows.append({
+                "异常类型": cat_label,
+                "运单号": wb_id,
+                "承运车辆": info["vehicle"],
+                "线路": info["route"],
+                "疫苗品种": info["products"],
+                "异常条数": len(info["messages"]),
+                "异常详情": "；".join(info["messages"]),
+            })
+
+    return rows
+
+
+def _build_unmatched_rows(results: list) -> list:
+    rows = []
+    for item in results:
+        if not item.get("filter_unmatched", False):
+            continue
+        rows.append({
+            "文件夹名": item.get("folder_name", "未知"),
+            "失败原因": item.get("error_message", ""),
+            "说明": "waybill.json 无法读取，无法判断是否属于当前筛选条件",
+        })
+    return rows
+
+
 def generate_daily_report_csv(
     results: list,
     output_path: str,
 ) -> str:
     detail_headers = [
-        "序号",
-        "运单号/文件夹",
-        "承运车辆",
-        "线路",
-        "承运商",
-        "状态",
-        "错误数",
-        "警告数",
-        "主要异常",
+        "序号", "运单号/文件夹", "承运车辆", "线路", "承运商", "状态", "错误数", "警告数", "主要异常",
     ]
 
     rows = []
     for idx, item in enumerate(results, 1):
         waybill = item.get("waybill")
+        is_unmatched = item.get("filter_unmatched", False)
         if item.get("load_failed"):
+            status = "加载失败（无法匹配筛选）" if is_unmatched else "加载失败"
             row = {
                 "序号": idx,
                 "运单号/文件夹": item["folder_name"],
                 "承运车辆": waybill.vehicle_plate if waybill else "-",
                 "线路": waybill.route if waybill else "-",
                 "承运商": waybill.carrier if waybill else "-",
-                "状态": "加载失败",
+                "状态": status,
                 "错误数": 1,
                 "警告数": 0,
                 "主要异常": item["error_message"],
@@ -154,32 +232,71 @@ def generate_daily_report_csv(
         rows.append(row)
 
     vehicle_headers = [
-        "承运车辆",
-        "承运商",
-        "当天运单数",
-        "通过",
-        "异常",
-        "其中加载失败",
-        "错误数",
-        "警告数",
-        "运输线路",
-        "主要问题",
+        "承运车辆", "承运商", "当天运单数", "通过", "异常", "其中加载失败", "错误数", "警告数", "运输线路", "主要问题",
     ]
     vehicle_rows = _build_vehicle_summary_rows(results)
+
+    anomaly_headers = [
+        "异常类型", "运单号", "承运车辆", "线路", "疫苗品种", "异常条数", "异常详情",
+    ]
+    anomaly_rows = _build_anomaly_type_rows(results)
 
     with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=detail_headers)
         writer.writeheader()
         writer.writerows(rows)
 
-        f.write("\n")
-        f.write("\n")
+        f.write("\n\n")
         f.write("=== 车辆分组小结 ===\n")
         writer2 = csv.DictWriter(f, fieldnames=vehicle_headers)
         writer2.writeheader()
         writer2.writerows(vehicle_rows)
 
+        if anomaly_rows:
+            f.write("\n\n")
+            f.write("=== 异常类型汇总 ===\n")
+            writer3 = csv.DictWriter(f, fieldnames=anomaly_headers)
+            writer3.writeheader()
+            writer3.writerows(anomaly_rows)
+
+        unmatched_rows = _build_unmatched_rows(results)
+        if unmatched_rows:
+            unmatched_headers = ["文件夹名", "失败原因", "说明"]
+            f.write("\n\n")
+            f.write("=== 补数据区域（无法匹配筛选条件） ===\n")
+            writer4 = csv.DictWriter(f, fieldnames=unmatched_headers)
+            writer4.writeheader()
+            writer4.writerows(unmatched_rows)
+
     return output_path
+
+
+def _write_xlsx_sheet(ws, headers, rows, header_font, header_fill, center_align, left_align, thin_border, center_cols=None):
+    center_cols = center_cols or set()
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    for row_idx, row_data in enumerate(rows, 2):
+        for col_idx, header in enumerate(headers, 1):
+            value = row_data.get(header, "") if isinstance(row_data, dict) else row_data[col_idx - 1]
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.border = thin_border
+            if col_idx in center_cols:
+                cell.alignment = center_align
+            else:
+                cell.alignment = left_align
+
+    ws.row_dimensions[1].height = 28
+
+
+def _set_column_widths(ws, widths):
+    for col_idx, width in enumerate(widths, 1):
+        col_letter = chr(64 + col_idx) if col_idx <= 26 else "A" + chr(64 + col_idx - 26)
+        ws.column_dimensions[col_letter].width = width
 
 
 def generate_daily_report_excel(
@@ -199,15 +316,13 @@ def generate_daily_report_excel(
     center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
     thin_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin"),
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
     )
-
     pass_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     fail_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
     load_fail_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    unmatched_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 
     detail_headers = [
         "序号", "运单号/文件夹", "承运车辆", "线路", "承运商", "状态", "错误数", "警告数", "主要异常",
@@ -215,28 +330,26 @@ def generate_daily_report_excel(
 
     ws = wb.active
     ws.title = "运单明细"
-    for col_idx, header in enumerate(detail_headers, 1):
-        cell = ws.cell(row=1, column=col_idx, value=header)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = center_align
-        cell.border = thin_border
+    _write_xlsx_sheet(ws, detail_headers, [], header_font, header_fill,
+                      center_align, left_align, thin_border, {1, 3, 6, 7, 8})
 
     for idx, item in enumerate(results, 2):
         waybill = item.get("waybill")
+        is_unmatched = item.get("filter_unmatched", False)
         if item.get("load_failed"):
+            status = "加载失败（无法匹配筛选）" if is_unmatched else "加载失败"
             row_data = [
                 idx - 1,
                 item["folder_name"],
                 waybill.vehicle_plate if waybill else "-",
                 waybill.route if waybill else "-",
                 waybill.carrier if waybill else "-",
-                "加载失败",
+                status,
                 1,
                 0,
                 item["error_message"],
             ]
-            status_fill = load_fail_fill
+            status_fill = unmatched_fill if is_unmatched else load_fail_fill
         else:
             issues = item["issues"]
             error_count = sum(1 for i in issues if i.severity == "error")
@@ -265,38 +378,34 @@ def generate_daily_report_excel(
             else:
                 cell.alignment = left_align
 
-    detail_widths = [6, 22, 14, 28, 12, 10, 8, 8, 50]
-    for col_idx, width in enumerate(detail_widths, 1):
-        ws.column_dimensions[chr(64 + col_idx)].width = width
-    ws.row_dimensions[1].height = 28
+    _set_column_widths(ws, [6, 22, 14, 28, 12, 22, 8, 8, 50])
 
     vehicle_headers = [
         "承运车辆", "承运商", "当天运单数", "通过", "异常", "其中加载失败", "错误数", "警告数", "运输线路", "主要问题",
     ]
     vehicle_rows = _build_vehicle_summary_rows(results)
-
     ws2 = wb.create_sheet(title="车辆分组小结")
-    for col_idx, header in enumerate(vehicle_headers, 1):
-        cell = ws2.cell(row=1, column=col_idx, value=header)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = center_align
-        cell.border = thin_border
+    _write_xlsx_sheet(ws2, vehicle_headers, [v for v in vehicle_rows], header_font, header_fill,
+                      center_align, left_align, thin_border, {3, 4, 5, 6, 7, 8})
+    _set_column_widths(ws2, [14, 14, 12, 8, 8, 14, 8, 8, 40, 50])
 
-    for idx, vrow in enumerate(vehicle_rows, 2):
-        for col_idx, header in enumerate(vehicle_headers, 1):
-            cell = ws2.cell(row=idx, column=col_idx, value=vrow.get(header, ""))
-            cell.border = thin_border
-            if col_idx in (3, 4, 5, 6, 7, 8):
-                cell.alignment = center_align
-            else:
-                cell.alignment = left_align
+    anomaly_headers = [
+        "异常类型", "运单号", "承运车辆", "线路", "疫苗品种", "异常条数", "异常详情",
+    ]
+    anomaly_rows = _build_anomaly_type_rows(results)
+    if anomaly_rows:
+        ws3 = wb.create_sheet(title="异常类型汇总")
+        _write_xlsx_sheet(ws3, anomaly_headers, anomaly_rows, header_font, header_fill,
+                          center_align, left_align, thin_border, {6})
+        _set_column_widths(ws3, [12, 22, 14, 28, 30, 10, 60])
 
-    vehicle_widths = [14, 14, 12, 8, 8, 12, 8, 8, 40, 50]
-    for col_idx, width in enumerate(vehicle_widths, 1):
-        col_letter = chr(64 + col_idx) if col_idx <= 26 else "A" + chr(64 + col_idx - 26)
-        ws2.column_dimensions[col_letter].width = width
-    ws2.row_dimensions[1].height = 28
+    unmatched_rows = _build_unmatched_rows(results)
+    if unmatched_rows:
+        unmatched_headers = ["文件夹名", "失败原因", "说明"]
+        ws4 = wb.create_sheet(title="补数据区域")
+        _write_xlsx_sheet(ws4, unmatched_headers, unmatched_rows, header_font, header_fill,
+                          center_align, left_align, thin_border)
+        _set_column_widths(ws4, [24, 50, 50])
 
     wb.save(output_path)
     return output_path
