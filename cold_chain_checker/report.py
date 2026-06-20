@@ -27,6 +27,21 @@ CATEGORY_ORDER = [
     "receipt_box_photo",
 ]
 
+RECTIFICATION_BUCKETS = {
+    "待补数据": {
+        "desc": "数据文件缺失或格式损坏，需重新补数据",
+        "categories": {"load_failed"},
+    },
+    "待司机补签": {
+        "desc": "签收资料不全，需司机补签字、补拍照片",
+        "categories": {"receipt_signature", "receipt_box_check", "receipt_box_photo"},
+    },
+    "待质控复核": {
+        "desc": "冷链过程异常，需质控复核并填写异常说明",
+        "categories": {"temperature_continuity", "temperature_range", "departure_time", "arrival_location"},
+    },
+}
+
 
 def _summarize_issues(issues: list) -> str:
     if not issues:
@@ -188,6 +203,225 @@ def _build_unmatched_rows(results: list) -> list:
     return rows
 
 
+def _build_product_liability_rows(results: list) -> list:
+    product_data = defaultdict(lambda: {
+        "vehicles": set(),
+        "routes": set(),
+        "carriers": set(),
+        "waybill_details": {},
+    })
+
+    for item in results:
+        waybill = item.get("waybill")
+        if not waybill:
+            continue
+        issues = item.get("issues", [])
+
+        unique_products_in_waybill = set()
+        for box in waybill.vaccine_boxes:
+            unique_products_in_waybill.add(box.product)
+
+        for product in unique_products_in_waybill:
+            entry = product_data[product]
+            entry["vehicles"].add(waybill.vehicle_plate)
+            entry["routes"].add(waybill.route)
+            entry["carriers"].add(waybill.carrier)
+
+            if waybill.waybill_id not in entry["waybill_details"]:
+                by_category = defaultdict(list)
+                for issue in issues:
+                    label = CATEGORY_LABELS.get(issue.category, issue.category)
+                    by_category[label].append(issue.message)
+
+                anomaly_parts = []
+                for cat in [CATEGORY_LABELS[c] for c in CATEGORY_ORDER if c in CATEGORY_LABELS]:
+                    if cat in by_category:
+                        anomaly_parts.append(f"{cat} {len(by_category[cat])}")
+
+                entry["waybill_details"][waybill.waybill_id] = {
+                    "vehicle": waybill.vehicle_plate,
+                    "route": waybill.route,
+                    "carrier": waybill.carrier,
+                    "status": "异常" if issues else "通过",
+                    "anomaly_types": "，".join(anomaly_parts) if anomaly_parts else "无",
+                    "anomaly_detail": _summarize_issues(issues),
+                }
+
+    rows = []
+    for product in sorted(product_data.keys()):
+        data = product_data[product]
+        total = len(data["waybill_details"])
+        passed = sum(1 for d in data["waybill_details"].values() if d["status"] == "通过")
+        failed = total - passed
+        vehicle_str = "、".join(sorted(data["vehicles"]))
+        carrier_str = "、".join(sorted(data["carriers"]))
+        route_str = "、".join(sorted(data["routes"]))
+
+        for wb_id in sorted(data["waybill_details"].keys()):
+            info = data["waybill_details"][wb_id]
+            rows.append({
+                "疫苗品种": product,
+                "品种总单数": total,
+                "品种通过": passed,
+                "品种异常": failed,
+                "品种涉及车辆": vehicle_str,
+                "品种涉及承运商": carrier_str,
+                "品种涉及线路": route_str,
+                "运单号": wb_id,
+                "承运车辆": info["vehicle"],
+                "线路": info["route"],
+                "承运商": info["carrier"],
+                "通过状态": info["status"],
+                "异常类型": info["anomaly_types"],
+                "异常详情": info["anomaly_detail"],
+            })
+
+    return rows
+
+
+def _build_rectification_rows(results: list) -> list:
+    rows = []
+    for bucket_name in ["待补数据", "待司机补签", "待质控复核"]:
+        bucket_def = RECTIFICATION_BUCKETS[bucket_name]
+        bucket_cats = bucket_def["categories"]
+
+        bucket_waybills = {}
+        for item in results:
+            waybill = item.get("waybill")
+            issues = item.get("issues", [])
+            if not issues:
+                continue
+
+            if waybill:
+                wb_id = waybill.waybill_id
+                vehicle = waybill.vehicle_plate
+                route = waybill.route
+                carrier = waybill.carrier
+            else:
+                wb_id = item.get("folder_name", "未知")
+                vehicle = "未知"
+                route = "未知"
+                carrier = "未知"
+
+            relevant = [i for i in issues if i.category in bucket_cats]
+            if not relevant:
+                continue
+
+            if wb_id not in bucket_waybills:
+                by_category = defaultdict(list)
+                for issue in relevant:
+                    label = CATEGORY_LABELS.get(issue.category, issue.category)
+                    by_category[label].append(issue.message)
+
+                cat_parts = []
+                for cat in [CATEGORY_LABELS[c] for c in CATEGORY_ORDER if c in CATEGORY_LABELS]:
+                    if cat in by_category:
+                        cat_parts.append(f"{cat} {len(by_category[cat])}")
+
+                all_messages = []
+                for issue in relevant:
+                    all_messages.append(issue.message)
+
+                bucket_waybills[wb_id] = {
+                    "vehicle": vehicle,
+                    "route": route,
+                    "carrier": carrier,
+                    "relevant_count": len(relevant),
+                    "anomaly_types": "，".join(cat_parts) if cat_parts else "无",
+                    "anomaly_detail": "；".join(all_messages),
+                }
+
+        for wb_id in sorted(bucket_waybills.keys()):
+            info = bucket_waybills[wb_id]
+            rows.append({
+                "整改分类": bucket_name,
+                "分类说明": bucket_def["desc"],
+                "运单号/文件夹": wb_id,
+                "承运车辆": info["vehicle"],
+                "线路": info["route"],
+                "承运商": info["carrier"],
+                "待办条数": info["relevant_count"],
+                "异常类型": info["anomaly_types"],
+                "待办详情": info["anomaly_detail"],
+            })
+
+    return rows
+
+
+def _build_liability_rows(results: list) -> list:
+    carrier_stats = defaultdict(lambda: {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "load_failed": 0,
+        "vehicles": set(),
+        "routes": set(),
+        "anomaly_counts": defaultdict(int),
+    })
+
+    for item in results:
+        waybill = item.get("waybill")
+        issues = item.get("issues", [])
+        is_load_failed = item.get("load_failed", False)
+
+        if waybill:
+            carrier = waybill.carrier
+            vehicle = waybill.vehicle_plate
+            route = waybill.route
+        else:
+            carrier = "（未知承运商）"
+            vehicle = "（未知车辆）"
+            route = "（未知线路）"
+
+        entry = carrier_stats[carrier]
+        entry["total"] += 1
+        entry["vehicles"].add(vehicle)
+        entry["routes"].add(route)
+
+        if is_load_failed:
+            entry["failed"] += 1
+            entry["load_failed"] += 1
+        else:
+            if issues:
+                entry["failed"] += 1
+            else:
+                entry["passed"] += 1
+
+        for issue in issues:
+            label = CATEGORY_LABELS.get(issue.category, issue.category)
+            entry["anomaly_counts"][label] += 1
+
+    sorted_carriers = sorted(
+        carrier_stats.items(),
+        key=lambda kv: (kv[1]["failed"], kv[1]["total"]),
+        reverse=True,
+    )
+
+    rows = []
+    for rank, (carrier, data) in enumerate(sorted_carriers, 1):
+        rate = (data["failed"] / data["total"] * 100) if data["total"] > 0 else 0
+
+        anomaly_parts = []
+        for cat in [CATEGORY_LABELS[c] for c in CATEGORY_ORDER if c in CATEGORY_LABELS]:
+            if data["anomaly_counts"][cat] > 0:
+                anomaly_parts.append(f"{cat} {data['anomaly_counts'][cat]}")
+
+        rows.append({
+            "排名": rank,
+            "承运商": carrier,
+            "总单数": data["total"],
+            "通过": data["passed"],
+            "异常": data["failed"],
+            "其中加载失败": data["load_failed"],
+            "异常率": f"{rate:.0f}%",
+            "涉及车辆": "、".join(sorted(data["vehicles"])),
+            "涉及线路": "、".join(sorted(data["routes"])),
+            "异常明细": "；".join(anomaly_parts) if anomaly_parts else "无",
+        })
+
+    return rows
+
+
 def generate_daily_report_csv(
     results: list,
     output_path: str,
@@ -241,6 +475,22 @@ def generate_daily_report_csv(
     ]
     anomaly_rows = _build_anomaly_type_rows(results)
 
+    product_headers = [
+        "疫苗品种", "品种总单数", "品种通过", "品种异常", "品种涉及车辆", "品种涉及承运商", "品种涉及线路",
+        "运单号", "承运车辆", "线路", "承运商", "通过状态", "异常类型", "异常详情",
+    ]
+    product_rows = _build_product_liability_rows(results)
+
+    rectification_headers = [
+        "整改分类", "分类说明", "运单号/文件夹", "承运车辆", "线路", "承运商", "待办条数", "异常类型", "待办详情",
+    ]
+    rectification_rows = _build_rectification_rows(results)
+
+    liability_headers = [
+        "排名", "承运商", "总单数", "通过", "异常", "其中加载失败", "异常率", "涉及车辆", "涉及线路", "异常明细",
+    ]
+    liability_rows = _build_liability_rows(results)
+
     with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=detail_headers)
         writer.writeheader()
@@ -258,6 +508,27 @@ def generate_daily_report_csv(
             writer3 = csv.DictWriter(f, fieldnames=anomaly_headers)
             writer3.writeheader()
             writer3.writerows(anomaly_rows)
+
+        if product_rows:
+            f.write("\n\n")
+            f.write("=== 品种追责台账 ===\n")
+            writer5 = csv.DictWriter(f, fieldnames=product_headers)
+            writer5.writeheader()
+            writer5.writerows(product_rows)
+
+        if rectification_rows:
+            f.write("\n\n")
+            f.write("=== 整改跟踪清单 ===\n")
+            writer6 = csv.DictWriter(f, fieldnames=rectification_headers)
+            writer6.writeheader()
+            writer6.writerows(rectification_rows)
+
+        if liability_rows:
+            f.write("\n\n")
+            f.write("=== 追责责任口径小结 ===\n")
+            writer7 = csv.DictWriter(f, fieldnames=liability_headers)
+            writer7.writeheader()
+            writer7.writerows(liability_rows)
 
         unmatched_rows = _build_unmatched_rows(results)
         if unmatched_rows:
@@ -398,6 +669,37 @@ def generate_daily_report_excel(
         _write_xlsx_sheet(ws3, anomaly_headers, anomaly_rows, header_font, header_fill,
                           center_align, left_align, thin_border, {6})
         _set_column_widths(ws3, [12, 22, 14, 28, 30, 10, 60])
+
+    product_headers = [
+        "疫苗品种", "品种总单数", "品种通过", "品种异常", "品种涉及车辆", "品种涉及承运商", "品种涉及线路",
+        "运单号", "承运车辆", "线路", "承运商", "通过状态", "异常类型", "异常详情",
+    ]
+    product_rows = _build_product_liability_rows(results)
+    if product_rows:
+        ws5 = wb.create_sheet(title="品种追责台账")
+        _write_xlsx_sheet(ws5, product_headers, product_rows, header_font, header_fill,
+                          center_align, left_align, thin_border, {2, 3, 4, 12})
+        _set_column_widths(ws5, [20, 10, 8, 8, 26, 14, 30, 22, 14, 28, 14, 10, 30, 60])
+
+    rectification_headers = [
+        "整改分类", "分类说明", "运单号/文件夹", "承运车辆", "线路", "承运商", "待办条数", "异常类型", "待办详情",
+    ]
+    rectification_rows = _build_rectification_rows(results)
+    if rectification_rows:
+        ws6 = wb.create_sheet(title="整改跟踪清单")
+        _write_xlsx_sheet(ws6, rectification_headers, rectification_rows, header_font, header_fill,
+                          center_align, left_align, thin_border, {7})
+        _set_column_widths(ws6, [12, 40, 22, 14, 28, 14, 10, 30, 60])
+
+    liability_headers = [
+        "排名", "承运商", "总单数", "通过", "异常", "其中加载失败", "异常率", "涉及车辆", "涉及线路", "异常明细",
+    ]
+    liability_rows = _build_liability_rows(results)
+    if liability_rows:
+        ws7 = wb.create_sheet(title="追责责任小结")
+        _write_xlsx_sheet(ws7, liability_headers, liability_rows, header_font, header_fill,
+                          center_align, left_align, thin_border, {1, 3, 4, 5, 6, 7})
+        _set_column_widths(ws7, [8, 16, 10, 8, 8, 14, 10, 26, 30, 60])
 
     unmatched_rows = _build_unmatched_rows(results)
     if unmatched_rows:

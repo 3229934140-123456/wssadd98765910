@@ -8,7 +8,8 @@ from cold_chain_checker.validator import validate_waybill
 from cold_chain_checker.summary import (
     generate_anomaly_summary, generate_product_summary,
     generate_vehicle_summary, generate_anomaly_type_summary,
-    generate_unmatched_summary,
+    generate_unmatched_summary, generate_rectification_list,
+    generate_liability_summary,
 )
 from cold_chain_checker.checklist import generate_handover_checklist
 from cold_chain_checker.display import format_single_result, format_batch_header, format_batch_footer
@@ -181,9 +182,17 @@ def run_batch_check(folder: str, output_checklist: str = None, output_report: st
     if anomaly_type_summary:
         print(anomaly_type_summary)
 
+    rectification_list = generate_rectification_list(results)
+    if rectification_list:
+        print(rectification_list)
+
     vehicle_summary = generate_vehicle_summary(results)
     if vehicle_summary:
         print(vehicle_summary)
+
+    liability_summary = generate_liability_summary(results)
+    if liability_summary:
+        print(liability_summary)
 
     unmatched_summary = generate_unmatched_summary(results)
     if unmatched_summary:

@@ -98,8 +98,12 @@ def generate_product_summary(results: list) -> str:
         if not waybill:
             continue
         issues = item.get("issues", [])
+
+        unique_products_in_waybill = set()
         for box in waybill.vaccine_boxes:
-            product = box.product
+            unique_products_in_waybill.add(box.product)
+
+        for product in unique_products_in_waybill:
             entry = product_data[product]
             entry["vehicles"].add(waybill.vehicle_plate)
             entry["routes"].add(waybill.route)
@@ -111,10 +115,9 @@ def generate_product_summary(results: list) -> str:
                     "route": waybill.route,
                     "issues": [],
                 }
-
-            if issues:
-                for r_issue in issues:
-                    entry["waybill_details"][waybill.waybill_id]["issues"].append(r_issue)
+                if issues:
+                    for r_issue in issues:
+                        entry["waybill_details"][waybill.waybill_id]["issues"].append(r_issue)
 
     if not product_data:
         return ""
@@ -360,6 +363,200 @@ def generate_unmatched_summary(results: list) -> str:
         error_msg = item.get("error_message", "")
         lines.append(f"   📂 {folder}")
         lines.append(f"      原因：{error_msg}")
+
+    lines.append("")
+    lines.append("=" * 70)
+    return "\n".join(lines)
+
+
+RECTIFICATION_BUCKETS = {
+    "待补数据": {
+        "desc": "数据文件缺失或格式损坏，需重新补数据",
+        "categories": {"load_failed"},
+    },
+    "待司机补签": {
+        "desc": "签收资料不全，需司机补签字、补拍照片",
+        "categories": {"receipt_signature", "receipt_box_check", "receipt_box_photo"},
+    },
+    "待质控复核": {
+        "desc": "冷链过程异常，需质控复核并填写异常说明",
+        "categories": {"temperature_continuity", "temperature_range", "departure_time", "arrival_location"},
+    },
+}
+
+
+def generate_rectification_list(results: list) -> str:
+    bucket_waybills = defaultdict(lambda: {})
+
+    for item in results:
+        waybill = item.get("waybill")
+        issues = item.get("issues", [])
+        if not issues:
+            continue
+
+        if waybill:
+            wb_id = waybill.waybill_id
+            vehicle = waybill.vehicle_plate
+            route = waybill.route
+            carrier = waybill.carrier
+        else:
+            wb_id = item.get("folder_name", "未知")
+            vehicle = "未知"
+            route = "未知"
+            carrier = "未知"
+
+        for issue in issues:
+            for bucket_name, bucket_def in RECTIFICATION_BUCKETS.items():
+                if issue.category in bucket_def["categories"]:
+                    if wb_id not in bucket_waybills[bucket_name]:
+                        bucket_waybills[bucket_name][wb_id] = {
+                            "vehicle": vehicle,
+                            "route": route,
+                            "carrier": carrier,
+                            "issues": [],
+                        }
+                    bucket_waybills[bucket_name][wb_id]["issues"].append(issue)
+
+    if not bucket_waybills:
+        return ""
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 70)
+    lines.append("整改跟踪清单")
+    lines.append("=" * 70)
+
+    for bucket_name in ["待补数据", "待司机补签", "待质控复核"]:
+        if bucket_name not in bucket_waybills:
+            continue
+        bucket_def = RECTIFICATION_BUCKETS[bucket_name]
+        waybills = bucket_waybills[bucket_name]
+        wb_count = len(waybills)
+        total_issues = sum(len(w["issues"]) for w in waybills.values())
+
+        lines.append("")
+        lines.append(f"📌 {bucket_name}（{wb_count} 单，共 {total_issues} 条）— {bucket_def['desc']}")
+
+        for wb_id in sorted(waybills.keys()):
+            info = waybills[wb_id]
+            lines.append(f"   ├── [{wb_id}] {info['vehicle']} | {info['route']} | {info['carrier']}")
+            by_category = defaultdict(list)
+            for issue in info["issues"]:
+                by_category[issue.category].append(issue)
+            for cat in CATEGORY_ORDER:
+                if cat not in by_category:
+                    continue
+                cat_issues = by_category[cat]
+                label = CATEGORY_LABELS.get(cat, cat)
+                lines.append(f"   │   {label}（{len(cat_issues)} 条）：")
+                for issue in cat_issues:
+                    prefix = "⛔" if issue.severity == "error" else "⚠️"
+                    lines.append(f"   │     {prefix} {issue.message}")
+
+    lines.append("")
+    lines.append("=" * 70)
+    return "\n".join(lines)
+
+
+def generate_liability_summary(results: list) -> str:
+    carrier_stats = defaultdict(lambda: {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "load_failed": 0,
+        "vehicles": set(),
+        "issues": [],
+    })
+    anomaly_type_count = defaultdict(lambda: defaultdict(int))
+    carrier_anomaly_type_count = defaultdict(lambda: defaultdict(int))
+
+    for item in results:
+        waybill = item.get("waybill")
+        issues = item.get("issues", [])
+        is_load_failed = item.get("load_failed", False)
+
+        if waybill:
+            carrier = waybill.carrier
+            vehicle = waybill.vehicle_plate
+        else:
+            carrier = "（未知承运商）"
+            vehicle = "（未知车辆）"
+
+        entry = carrier_stats[carrier]
+        entry["total"] += 1
+        entry["vehicles"].add(vehicle)
+
+        if is_load_failed:
+            entry["failed"] += 1
+            entry["load_failed"] += 1
+        else:
+            if issues:
+                entry["failed"] += 1
+            else:
+                entry["passed"] += 1
+
+        for issue in issues:
+            entry["issues"].append((vehicle, issue))
+            label = CATEGORY_LABELS.get(issue.category, issue.category)
+            anomaly_type_count[label][carrier] += 1
+            carrier_anomaly_type_count[carrier][label] += 1
+
+    if not carrier_stats:
+        return ""
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 70)
+    lines.append("追责责任口径小结")
+    lines.append("=" * 70)
+
+    lines.append("")
+    lines.append("📊 承运商排名（按异常单数量降序）：")
+    lines.append("")
+
+    sorted_carriers = sorted(
+        carrier_stats.items(),
+        key=lambda kv: (kv[1]["failed"], kv[1]["total"]),
+        reverse=True,
+    )
+    rank = 1
+    for carrier, data in sorted_carriers:
+        vehicles = "、".join(sorted(data["vehicles"]))
+        rate = (data["failed"] / data["total"] * 100) if data["total"] > 0 else 0
+        rate_tag = f"（异常率 {rate:.0f}%）"
+
+        anomaly_parts = []
+        for label, count in sorted(
+            carrier_anomaly_type_count[carrier].items(),
+            key=lambda x: x[1],
+            reverse=True,
+        ):
+            anomaly_parts.append(f"{label} {count}")
+        anomaly_str = "，".join(anomaly_parts) if anomaly_parts else "无"
+
+        load_fail_tag = f"，其中加载失败 {data['load_failed']} 单" if data["load_failed"] > 0 else ""
+        lines.append(
+            f"   {rank}. {carrier}：{data['total']} 单 | 通过 {data['passed']} | 异常 {data['failed']}{load_fail_tag} {rate_tag}"
+        )
+        lines.append(f"      车辆：{vehicles}")
+        lines.append(f"      主要问题：{anomaly_str}")
+        rank += 1
+
+    lines.append("")
+    lines.append("📋 异常类型分布（按涉及承运商数降序）：")
+    lines.append("")
+
+    sorted_anomaly = sorted(
+        anomaly_type_count.items(),
+        key=lambda kv: (sum(kv[1].values()), len(kv[1])),
+        reverse=True,
+    )
+    for label, carrier_map in sorted_anomaly:
+        total = sum(carrier_map.values())
+        carrier_count = len(carrier_map)
+        top_carriers = sorted(carrier_map.items(), key=lambda x: x[1], reverse=True)[:3]
+        top_str = "，".join(f"{c} {n}条" for c, n in top_carriers)
+        lines.append(f"   - {label}：{total} 条，涉及 {carrier_count} 家承运商（{top_str}）")
 
     lines.append("")
     lines.append("=" * 70)
