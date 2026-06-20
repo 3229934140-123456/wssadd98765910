@@ -89,21 +89,75 @@ def check_temperature_continuity(temperature: TemperatureLog) -> list:
 
 def check_temperature_range(temperature: TemperatureLog) -> list:
     issues = []
-    for rec in temperature.records:
-        if rec.temperature < temperature.range_min:
-            issues.append(ValidationIssue(
-                waybill_id=temperature.waybill_id,
-                category="temperature_range",
-                severity="error",
-                message=f"{rec.timestamp.strftime('%H:%M')} 温度 {rec.temperature}°C 低于下限 {temperature.range_min}°C",
-            ))
-        elif rec.temperature > temperature.range_max:
-            issues.append(ValidationIssue(
-                waybill_id=temperature.waybill_id,
-                category="temperature_range",
-                severity="error",
-                message=f"{rec.timestamp.strftime('%H:%M')} 温度 {rec.temperature}°C 高于上限 {temperature.range_max}°C",
-            ))
+    records = temperature.records
+    if not records:
+        return issues
+
+    def _add_merged_issue(start_rec, end_rec, direction):
+        start_str = start_rec.timestamp.strftime("%H:%M")
+        end_str = end_rec.timestamp.strftime("%H:%M")
+        if start_rec == end_rec:
+            if direction == "above":
+                msg = f"{start_str} 温度 {start_rec.temperature}°C 高于上限 {temperature.range_max}°C"
+            else:
+                msg = f"{start_str} 温度 {start_rec.temperature}°C 低于下限 {temperature.range_min}°C"
+        else:
+            if direction == "above":
+                msg = f"{start_str} 至 {end_str} 温度持续高于上限 {temperature.range_max}°C（最高 {max_temp}°C）"
+            else:
+                msg = f"{start_str} 至 {end_str} 温度持续低于下限 {temperature.range_min}°C（最低 {min_temp}°C）"
+        issues.append(ValidationIssue(
+            waybill_id=temperature.waybill_id,
+            category="temperature_range",
+            severity="error",
+            message=msg,
+        ))
+
+    in_above = False
+    in_below = False
+    above_start = None
+    below_start = None
+    above_end = None
+    below_end = None
+    max_temp = None
+    min_temp = None
+
+    for rec in records:
+        if rec.temperature > temperature.range_max:
+            if not in_above:
+                in_above = True
+                above_start = rec
+                max_temp = rec.temperature
+            else:
+                max_temp = max(max_temp, rec.temperature)
+            above_end = rec
+        elif rec.temperature < temperature.range_min:
+            if not in_below:
+                in_below = True
+                below_start = rec
+                min_temp = rec.temperature
+            else:
+                min_temp = min(min_temp, rec.temperature)
+            below_end = rec
+        else:
+            if in_above:
+                _add_merged_issue(above_start, above_end, "above")
+                in_above = False
+                above_start = None
+                above_end = None
+                max_temp = None
+            if in_below:
+                _add_merged_issue(below_start, below_end, "below")
+                in_below = False
+                below_start = None
+                below_end = None
+                min_temp = None
+
+    if in_above:
+        _add_merged_issue(above_start, above_end, "above")
+    if in_below:
+        _add_merged_issue(below_start, below_end, "below")
+
     return issues
 
 

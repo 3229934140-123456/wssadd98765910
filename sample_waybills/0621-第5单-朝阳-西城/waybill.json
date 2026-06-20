@@ -1,0 +1,18 @@
+{
+  "waybill_id": "WB20260621005",
+  "vehicle_plate": "京D22222",
+  "route": "朝阳疾控中心→西城社区卫生中心",
+  "carrier": "西城冷链",
+  "departure_time": "2026-06-21T08:30:00",
+  "outbound_order_time": "2026-06-21T08:00:00",
+  "vaccination_point": {
+    "name": "西城区社区卫生中心",
+    "latitude": 39.9150,
+    "longitude": 116.3600,
+    "radius_km": 2.0
+  },
+  "vaccine_boxes": [
+    {"box_code": "BX20260621005A", "product": "麻腮风疫苗", "quantity": 25},
+    {"box_code": "BX20260621005B", "product": "水痘疫苗", "quantity": 20}
+  ]
+}

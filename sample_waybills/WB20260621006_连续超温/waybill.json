@@ -1,0 +1,17 @@
+{
+  "waybill_id": "WB20260621006",
+  "vehicle_plate": "京E33333",
+  "route": "东城疾控中心→朝阳接种点",
+  "carrier": "东城冷链",
+  "departure_time": "2026-06-21T09:00:00",
+  "outbound_order_time": "2026-06-21T08:30:00",
+  "vaccination_point": {
+    "name": "朝阳区接种中心",
+    "latitude": 39.9280,
+    "longitude": 116.4420,
+    "radius_km": 2.0
+  },
+  "vaccine_boxes": [
+    {"box_code": "BX20260621006A", "product": "肺炎疫苗", "quantity": 30}
+  ]
+}

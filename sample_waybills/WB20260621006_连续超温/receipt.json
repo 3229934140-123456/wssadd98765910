@@ -1,0 +1,11 @@
+{
+  "waybill_id": "WB20260621006",
+  "recipient": "孙医生",
+  "received_at": "2026-06-21T09:55:00",
+  "signed": true,
+  "signature_photo": "sign_WB20260621006.jpg",
+  "box_checks": [
+    {"box_code": "BX20260621006A", "checked": true, "photo": "box_A_WB20260621006.jpg"}
+  ],
+  "anomaly_note": null
+}

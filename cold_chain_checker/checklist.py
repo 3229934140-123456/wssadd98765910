@@ -1,17 +1,33 @@
 from cold_chain_checker.models import Waybill, Receipt, ValidationIssue
 
 
-def generate_handover_checklist(waybill: Waybill, receipt: Receipt, issues: list) -> str:
+def generate_handover_checklist(waybill: Waybill, receipt: Receipt, issues: list, folder_name: str = "") -> str:
     lines = []
-    lines.append(f"运单号：{waybill.waybill_id}")
-    lines.append(f"承运车辆：{waybill.vehicle_plate}")
-    lines.append(f"线路：{waybill.route}")
+    display_id = waybill.waybill_id if waybill else folder_name
+    vehicle = waybill.vehicle_plate if waybill else "未知"
+    route = waybill.route if waybill else "未知"
+
+    lines.append(f"运单号：{display_id}")
+    if folder_name and folder_name != display_id:
+        lines.append(f"目录名：{folder_name}")
+    lines.append(f"承运车辆：{vehicle}")
+    lines.append(f"线路：{route}")
     lines.append("-" * 50)
     lines.append("司机补资料待办：")
     lines.append("")
 
     todo_index = 1
     has_items = False
+
+    if waybill is None or receipt is None:
+        lines.append(f"  {todo_index}. [数据补全] 运单数据文件加载失败，请检查 JSON 文件格式")
+        todo_index += 1
+        has_items = True
+        if issues:
+            for issue in issues:
+                if issue.category == "load_failed":
+                    lines.append(f"      错误原因：{issue.message}")
+        return "\n".join(lines)
 
     if not receipt.signed:
         lines.append(f"  {todo_index}. [签字页] 签收单缺少签字，需补签并拍照上传")
