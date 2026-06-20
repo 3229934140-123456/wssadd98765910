@@ -1,0 +1,17 @@
+{
+  "waybill_id": "WB20260621007",
+  "interval_minutes": 5,
+  "range": {"min": 2.0, "max": 8.0},
+  "records": [
+    {"timestamp": "2026-06-21T08:00:00", "temperature": 4.0},
+    {"timestamp": "2026-06-21T08:05:00", "temperature": 5.5},
+    {"timestamp": "2026-06-21T08:10:00", "temperature": 8.5},
+    {"timestamp": "2026-06-21T08:15:00", "temperature": 9.2},
+    {"timestamp": "2026-06-21T08:20:00", "temperature": 7.0},
+    {"timestamp": "2026-06-21T08:40:00", "temperature": 6.0},
+    {"timestamp": "2026-06-21T08:45:00", "temperature": 8.8},
+    {"timestamp": "2026-06-21T08:50:00", "temperature": 9.5},
+    {"timestamp": "2026-06-21T08:55:00", "temperature": 7.5},
+    {"timestamp": "2026-06-21T09:00:00", "temperature": 4.0}
+  ]
+}

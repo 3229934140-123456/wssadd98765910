@@ -29,12 +29,86 @@ def _summarize_issues(issues: list) -> str:
     return "；".join(parts)
 
 
+def _build_vehicle_summary_rows(results: list) -> list:
+    vehicle_data = defaultdict(lambda: {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "load_failed": 0,
+        "routes": set(),
+        "carriers": set(),
+        "issues": [],
+    })
+
+    for item in results:
+        waybill = item.get("waybill")
+        if not waybill:
+            if item.get("load_failed"):
+                partial_wb = item.get("waybill")
+                if partial_wb:
+                    key = partial_wb.vehicle_plate
+                else:
+                    key = "（未知车辆）"
+                entry = vehicle_data[key]
+                entry["total"] += 1
+                entry["load_failed"] += 1
+                entry["failed"] += 1
+                for issue in item.get("issues", []):
+                    entry["issues"].append(issue)
+            continue
+
+        key = waybill.vehicle_plate
+        entry = vehicle_data[key]
+        entry["total"] += 1
+        entry["routes"].add(waybill.route)
+        entry["carriers"].add(waybill.carrier)
+        issues = item.get("issues", [])
+        if issues:
+            entry["failed"] += 1
+            for issue in issues:
+                entry["issues"].append(issue)
+        else:
+            entry["passed"] += 1
+
+    rows = []
+    for vehicle in sorted(vehicle_data.keys()):
+        data = vehicle_data[vehicle]
+        route_str = "、".join(sorted(data["routes"]))
+        carrier_str = "、".join(sorted(data["carriers"]))
+        error_count = sum(1 for i in data["issues"] if i.severity == "error")
+        warning_count = sum(1 for i in data["issues"] if i.severity == "warning")
+
+        by_category = defaultdict(list)
+        for issue in data["issues"]:
+            by_category[issue.category].append(issue)
+
+        summary_parts = []
+        for cat, cat_items in by_category.items():
+            label = CATEGORY_LABELS.get(cat, cat)
+            summary_parts.append(f"{label} {len(cat_items)} 条")
+        main_issues = "，".join(summary_parts) if summary_parts else "无"
+
+        rows.append({
+            "承运车辆": vehicle,
+            "承运商": carrier_str,
+            "当天运单数": data["total"],
+            "通过": data["passed"],
+            "异常": data["failed"],
+            "其中加载失败": data["load_failed"],
+            "错误数": error_count,
+            "警告数": warning_count,
+            "运输线路": route_str,
+            "主要问题": main_issues,
+        })
+
+    return rows
+
+
 def generate_daily_report_csv(
     results: list,
     output_path: str,
 ) -> str:
-    rows = []
-    headers = [
+    detail_headers = [
         "序号",
         "运单号/文件夹",
         "承运车辆",
@@ -46,21 +120,22 @@ def generate_daily_report_csv(
         "主要异常",
     ]
 
+    rows = []
     for idx, item in enumerate(results, 1):
-        if item["load_failed"]:
+        waybill = item.get("waybill")
+        if item.get("load_failed"):
             row = {
                 "序号": idx,
                 "运单号/文件夹": item["folder_name"],
-                "承运车辆": "-",
-                "线路": "-",
-                "承运商": "-",
+                "承运车辆": waybill.vehicle_plate if waybill else "-",
+                "线路": waybill.route if waybill else "-",
+                "承运商": waybill.carrier if waybill else "-",
                 "状态": "加载失败",
                 "错误数": 1,
                 "警告数": 0,
                 "主要异常": item["error_message"],
             }
         else:
-            waybill = item["waybill"]
             issues = item["issues"]
             error_count = sum(1 for i in issues if i.severity == "error")
             warning_count = sum(1 for i in issues if i.severity == "warning")
@@ -78,10 +153,31 @@ def generate_daily_report_csv(
             }
         rows.append(row)
 
+    vehicle_headers = [
+        "承运车辆",
+        "承运商",
+        "当天运单数",
+        "通过",
+        "异常",
+        "其中加载失败",
+        "错误数",
+        "警告数",
+        "运输线路",
+        "主要问题",
+    ]
+    vehicle_rows = _build_vehicle_summary_rows(results)
+
     with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=headers)
+        writer = csv.DictWriter(f, fieldnames=detail_headers)
         writer.writeheader()
         writer.writerows(rows)
+
+        f.write("\n")
+        f.write("\n")
+        f.write("=== 车辆分组小结 ===\n")
+        writer2 = csv.DictWriter(f, fieldnames=vehicle_headers)
+        writer2.writeheader()
+        writer2.writerows(vehicle_rows)
 
     return output_path
 
@@ -97,20 +193,6 @@ def generate_daily_report_excel(
         raise ImportError("未安装 openpyxl，请先安装：pip install openpyxl")
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = "每日校验日报"
-
-    headers = [
-        "序号",
-        "运单号/文件夹",
-        "承运车辆",
-        "线路",
-        "承运商",
-        "状态",
-        "错误数",
-        "警告数",
-        "主要异常",
-    ]
 
     header_font = Font(bold=True, color="FFFFFF", size=11)
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -127,7 +209,13 @@ def generate_daily_report_excel(
     fail_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
     load_fail_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
 
-    for col_idx, header in enumerate(headers, 1):
+    detail_headers = [
+        "序号", "运单号/文件夹", "承运车辆", "线路", "承运商", "状态", "错误数", "警告数", "主要异常",
+    ]
+
+    ws = wb.active
+    ws.title = "运单明细"
+    for col_idx, header in enumerate(detail_headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=header)
         cell.font = header_font
         cell.fill = header_fill
@@ -135,13 +223,14 @@ def generate_daily_report_excel(
         cell.border = thin_border
 
     for idx, item in enumerate(results, 2):
-        if item["load_failed"]:
+        waybill = item.get("waybill")
+        if item.get("load_failed"):
             row_data = [
                 idx - 1,
                 item["folder_name"],
-                "-",
-                "-",
-                "-",
+                waybill.vehicle_plate if waybill else "-",
+                waybill.route if waybill else "-",
+                waybill.carrier if waybill else "-",
                 "加载失败",
                 1,
                 0,
@@ -149,7 +238,6 @@ def generate_daily_report_excel(
             ]
             status_fill = load_fail_fill
         else:
-            waybill = item["waybill"]
             issues = item["issues"]
             error_count = sum(1 for i in issues if i.severity == "error")
             warning_count = sum(1 for i in issues if i.severity == "warning")
@@ -177,11 +265,38 @@ def generate_daily_report_excel(
             else:
                 cell.alignment = left_align
 
-    column_widths = [6, 22, 14, 28, 12, 10, 8, 8, 50]
-    for col_idx, width in enumerate(column_widths, 1):
+    detail_widths = [6, 22, 14, 28, 12, 10, 8, 8, 50]
+    for col_idx, width in enumerate(detail_widths, 1):
         ws.column_dimensions[chr(64 + col_idx)].width = width
-
     ws.row_dimensions[1].height = 28
+
+    vehicle_headers = [
+        "承运车辆", "承运商", "当天运单数", "通过", "异常", "其中加载失败", "错误数", "警告数", "运输线路", "主要问题",
+    ]
+    vehicle_rows = _build_vehicle_summary_rows(results)
+
+    ws2 = wb.create_sheet(title="车辆分组小结")
+    for col_idx, header in enumerate(vehicle_headers, 1):
+        cell = ws2.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    for idx, vrow in enumerate(vehicle_rows, 2):
+        for col_idx, header in enumerate(vehicle_headers, 1):
+            cell = ws2.cell(row=idx, column=col_idx, value=vrow.get(header, ""))
+            cell.border = thin_border
+            if col_idx in (3, 4, 5, 6, 7, 8):
+                cell.alignment = center_align
+            else:
+                cell.alignment = left_align
+
+    vehicle_widths = [14, 14, 12, 8, 8, 12, 8, 8, 40, 50]
+    for col_idx, width in enumerate(vehicle_widths, 1):
+        col_letter = chr(64 + col_idx) if col_idx <= 26 else "A" + chr(64 + col_idx - 26)
+        ws2.column_dimensions[col_letter].width = width
+    ws2.row_dimensions[1].height = 28
 
     wb.save(output_path)
     return output_path

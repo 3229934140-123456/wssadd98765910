@@ -1,0 +1,18 @@
+{
+  "waybill_id": "WB20260621007",
+  "vehicle_plate": "京F44444",
+  "route": "石景山疾控中心→门头沟接种点",
+  "carrier": "京西冷链",
+  "departure_time": "2026-06-21T08:00:00",
+  "outbound_order_time": "2026-06-21T07:30:00",
+  "vaccination_point": {
+    "name": "门头沟区接种中心",
+    "latitude": 39.9370,
+    "longitude": 116.1020,
+    "radius_km": 2.0
+  },
+  "vaccine_boxes": [
+    {"box_code": "BX20260621007A", "product": "新冠疫苗（灭活）", "quantity": 40},
+    {"box_code": "BX20260621007B", "product": "狂犬疫苗", "quantity": 25}
+  ]
+}

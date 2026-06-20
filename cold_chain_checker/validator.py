@@ -87,13 +87,42 @@ def check_temperature_continuity(temperature: TemperatureLog) -> list:
     return issues
 
 
+def _find_gap_indices(records, interval_minutes):
+    if len(records) < 2:
+        return []
+    max_gap_multiplier = 2.5
+    expected_interval = timedelta(minutes=interval_minutes)
+    gap_threshold = expected_interval * max_gap_multiplier
+    indices = []
+    for i in range(1, len(records)):
+        gap = records[i].timestamp - records[i - 1].timestamp
+        if gap > gap_threshold:
+            indices.append(i)
+    return indices
+
+
+def _split_by_gaps(records, gap_indices):
+    if not gap_indices:
+        return [records] if records else []
+    segments = []
+    prev = 0
+    for gi in gap_indices:
+        segments.append(records[prev:gi])
+        prev = gi
+    segments.append(records[prev:])
+    return segments
+
+
 def check_temperature_range(temperature: TemperatureLog) -> list:
     issues = []
     records = temperature.records
     if not records:
         return issues
 
-    def _add_merged_issue(start_rec, end_rec, direction):
+    gap_indices = _find_gap_indices(records, temperature.interval_minutes)
+    segments = _split_by_gaps(records, gap_indices)
+
+    def _add_merged_issue(start_rec, end_rec, direction, peak):
         start_str = start_rec.timestamp.strftime("%H:%M")
         end_str = end_rec.timestamp.strftime("%H:%M")
         if start_rec == end_rec:
@@ -103,9 +132,9 @@ def check_temperature_range(temperature: TemperatureLog) -> list:
                 msg = f"{start_str} 温度 {start_rec.temperature}°C 低于下限 {temperature.range_min}°C"
         else:
             if direction == "above":
-                msg = f"{start_str} 至 {end_str} 温度持续高于上限 {temperature.range_max}°C（最高 {max_temp}°C）"
+                msg = f"{start_str} 至 {end_str} 温度持续高于上限 {temperature.range_max}°C（最高 {peak}°C）"
             else:
-                msg = f"{start_str} 至 {end_str} 温度持续低于下限 {temperature.range_min}°C（最低 {min_temp}°C）"
+                msg = f"{start_str} 至 {end_str} 温度持续低于下限 {temperature.range_min}°C（最低 {peak}°C）"
         issues.append(ValidationIssue(
             waybill_id=temperature.waybill_id,
             category="temperature_range",
@@ -113,50 +142,51 @@ def check_temperature_range(temperature: TemperatureLog) -> list:
             message=msg,
         ))
 
-    in_above = False
-    in_below = False
-    above_start = None
-    below_start = None
-    above_end = None
-    below_end = None
-    max_temp = None
-    min_temp = None
+    for segment in segments:
+        in_above = False
+        in_below = False
+        above_start = None
+        below_start = None
+        above_end = None
+        below_end = None
+        max_temp = None
+        min_temp = None
 
-    for rec in records:
-        if rec.temperature > temperature.range_max:
-            if not in_above:
-                in_above = True
-                above_start = rec
-                max_temp = rec.temperature
+        for rec in segment:
+            if rec.temperature > temperature.range_max:
+                if not in_above:
+                    in_above = True
+                    above_start = rec
+                    max_temp = rec.temperature
+                else:
+                    max_temp = max(max_temp, rec.temperature)
+                above_end = rec
+            elif rec.temperature < temperature.range_min:
+                if not in_below:
+                    in_below = True
+                    below_start = rec
+                    min_temp = rec.temperature
+                else:
+                    min_temp = min(min_temp, rec.temperature)
+                below_end = rec
             else:
-                max_temp = max(max_temp, rec.temperature)
-            above_end = rec
-        elif rec.temperature < temperature.range_min:
-            if not in_below:
-                in_below = True
-                below_start = rec
-                min_temp = rec.temperature
-            else:
-                min_temp = min(min_temp, rec.temperature)
-            below_end = rec
-        else:
-            if in_above:
-                _add_merged_issue(above_start, above_end, "above")
-                in_above = False
-                above_start = None
-                above_end = None
-                max_temp = None
-            if in_below:
-                _add_merged_issue(below_start, below_end, "below")
-                in_below = False
-                below_start = None
-                below_end = None
-                min_temp = None
+                if in_above:
+                    _add_merged_issue(above_start, above_end, "above", max_temp)
+                    in_above = False
+                    above_start = None
+                    above_end = None
+                    max_temp = None
+                if in_below:
+                    _add_merged_issue(below_start, below_end, "below", min_temp)
+                    in_below = False
+                    below_start = None
+                    below_end = None
+                    min_temp = None
 
-    if in_above:
-        _add_merged_issue(above_start, above_end, "above")
-    if in_below:
-        _add_merged_issue(below_start, below_end, "below")
+        if in_above:
+            _add_merged_issue(above_start, above_end, "above", max_temp)
+        if in_below:
+            _add_merged_issue(below_start, below_end, "below", min_temp)
 
     return issues
 

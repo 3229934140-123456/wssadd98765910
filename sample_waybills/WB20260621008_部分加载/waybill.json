@@ -1,0 +1,17 @@
+{
+  "waybill_id": "WB20260621008",
+  "vehicle_plate": "京A12345",
+  "route": "朝阳疾控中心→海淀社区卫生中心",
+  "carrier": "顺达冷链",
+  "departure_time": "2026-06-21T10:00:00",
+  "outbound_order_time": "2026-06-21T09:30:00",
+  "vaccination_point": {
+    "name": "海淀区社区卫生中心",
+    "latitude": 39.9590,
+    "longitude": 116.2980,
+    "radius_km": 2.0
+  },
+  "vaccine_boxes": [
+    {"box_code": "BX20260621008A", "product": "新冠疫苗（灭活）", "quantity": 30}
+  ]
+}

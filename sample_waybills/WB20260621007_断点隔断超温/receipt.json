@@ -1,0 +1,12 @@
+{
+  "waybill_id": "WB20260621007",
+  "recipient": "周主任",
+  "received_at": "2026-06-21T09:00:00",
+  "signed": true,
+  "signature_photo": "sign_WB20260621007.jpg",
+  "box_checks": [
+    {"box_code": "BX20260621007A", "checked": true, "photo": "box_A_WB20260621007.jpg"},
+    {"box_code": "BX20260621007B", "checked": true, "photo": "box_B_WB20260621007.jpg"}
+  ],
+  "anomaly_note": null
+}

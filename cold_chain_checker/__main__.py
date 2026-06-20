@@ -5,7 +5,7 @@ from datetime import datetime
 
 from cold_chain_checker.models import load_waybill, ValidationIssue
 from cold_chain_checker.validator import validate_waybill
-from cold_chain_checker.summary import generate_anomaly_summary
+from cold_chain_checker.summary import generate_anomaly_summary, generate_product_summary, generate_vehicle_summary
 from cold_chain_checker.checklist import generate_handover_checklist
 from cold_chain_checker.display import format_single_result, format_batch_header, format_batch_footer
 from cold_chain_checker.report import export_daily_report
@@ -43,6 +43,21 @@ def matches_filters(waybill, filters: dict) -> bool:
     return True
 
 
+def _filter_load_failed(load_result, filters: dict) -> str:
+    if not filters:
+        return "include"
+
+    partial_wb = load_result.waybill
+    if partial_wb is None:
+        if filters.get("vehicle") or filters.get("route") or filters.get("date"):
+            return "unmatched"
+        return "include"
+
+    if matches_filters(partial_wb, filters):
+        return "include"
+    return "exclude"
+
+
 def run_batch_check(folder: str, output_checklist: str = None, output_report: str = None,
                     summary_only: bool = False, filters: dict = None):
     filters = filters or {}
@@ -69,27 +84,36 @@ def run_batch_check(folder: str, output_checklist: str = None, output_report: st
         load_result = load_waybill(wdir)
 
         if not load_result.success:
+            filter_result = _filter_load_failed(load_result, filters)
+
+            if filter_result == "exclude":
+                skipped += 1
+                continue
+
             result_entry = {
                 "folder_name": folder_name,
                 "load_failed": True,
                 "error_message": load_result.error_message,
-                "waybill": None,
+                "waybill": load_result.waybill,
                 "issues": [ValidationIssue(
-                    waybill_id=folder_name,
+                    waybill_id=load_result.waybill_id_or_folder,
                     category="load_failed",
                     severity="error",
                     message=load_result.error_message,
                 )],
+                "filter_unmatched": filter_result == "unmatched",
             }
             results.append(result_entry)
             load_failures.append({
                 "folder_name": folder_name,
                 "error_message": load_result.error_message,
+                "waybill": load_result.waybill,
             })
             failed += 1
 
             if not summary_only:
-                print(f"  ⚠️ 第 {idx} 单 [{folder_name}] 加载失败：{load_result.error_message}")
+                tag = "（无法匹配筛选条件）" if filter_result == "unmatched" else ""
+                print(f"  ⚠️ 第 {idx} 单 [{folder_name}] 加载失败{tag}：{load_result.error_message}")
             continue
 
         waybill = load_result.waybill
@@ -114,6 +138,7 @@ def run_batch_check(folder: str, output_checklist: str = None, output_report: st
             "temperature": load_result.temperature,
             "receipt": load_result.receipt,
             "issues": issues,
+            "filter_unmatched": False,
         }
         results.append(result_entry)
         all_waybills.append(waybill)
@@ -143,6 +168,14 @@ def run_batch_check(folder: str, output_checklist: str = None, output_report: st
         print(generate_anomaly_summary(all_waybills, all_issues, load_failures))
     else:
         print(generate_anomaly_summary(all_waybills, all_issues, load_failures))
+
+    product_summary = generate_product_summary(results)
+    if product_summary:
+        print(product_summary)
+
+    vehicle_summary = generate_vehicle_summary(results)
+    if vehicle_summary:
+        print(vehicle_summary)
 
     if output_report:
         report_path = export_daily_report(results, output_report)

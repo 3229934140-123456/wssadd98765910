@@ -1,0 +1,7 @@
+{
+  "waybill_id": "WB20260621007",
+  "points": [
+    {"timestamp": "2026-06-21T08:00:00", "latitude": 39.9060, "longitude": 116.2200, "speed": 0},
+    {"timestamp": "2026-06-21T09:00:00", "latitude": 39.9370, "longitude": 116.1020, "speed": 0}
+  ]
+}
